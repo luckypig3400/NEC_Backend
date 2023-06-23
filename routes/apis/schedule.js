@@ -13,7 +13,21 @@ router
             #swagger.description = '取得排程' 
         */
         try {
-            const { search, dateFrom, dateTo } = req.query
+            const { limit, offset, sort, desc, search, dateRange, status } = req.query
+
+            if (!dateRange && status !== 'all') return res.status(400).json({ message: 'Need a date range' })
+
+            const dateConditions =
+                status !== 'all'
+                    ? {
+                          createdAt: {
+                              $gte: new Date(JSON.parse(dateRange).from),
+                              $lte: new Date(JSON.parse(dateRange).to),
+                          },
+                      }
+                    : {}
+
+            if (!limit || !offset) return res.status(400).json({ message: 'Need a limit and offset' })
 
             const searchRe = new RegExp(search)
             const searchQuery = search
@@ -21,16 +35,6 @@ router
                       $or: [{ procedureCode: searchRe }, { patientID: searchRe }],
                   }
                 : {}
-
-            const dateConditions =
-                dateFrom && dateTo
-                    ? {
-                          createdAt: {
-                              $gte: new Date(dateFrom),
-                              $lte: new Date(dateTo),
-                          },
-                      }
-                    : {}
 
             const schedule = await SCHEDULE.aggregate([
                 { $match: dateConditions },
@@ -59,6 +63,9 @@ router
                         as: 'report',
                     },
                 },
+                { $sort: { [sort]: Number(desc) } },
+                { $skip: Number(limit) * Number(offset) },
+                { $limit: Number(limit) },
                 {
                     $addFields: {
                         patient: { $arrayElemAt: ['$patient', 0] },
@@ -67,8 +74,7 @@ router
                 },
             ])
 
-            // const schedule = await SCHEDULE.find(query).populate('patient').populate('report')
-            const count = await SCHEDULE.find(searchQuery).countDocuments()
+            const count = await SCHEDULE.find({ ...searchQuery, ...dateConditions }).countDocuments()
 
             return res.status(200).json({ results: schedule, count })
         } catch (e) {
@@ -112,7 +118,6 @@ router
             const { scheduleID } = req.body
             const schedule = await SCHEDULE.findOneAndDelete({ _id: scheduleID })
             await REPORT.findOneAndDelete({ _id: schedule.reportID })
-
             if (!schedule) return res.status(404).json({ message: '找不到排程資料' })
             return res.status(200).json(schedule)
         } catch (e) {
